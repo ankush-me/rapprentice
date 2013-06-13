@@ -453,12 +453,16 @@ def tps_fit_fixedrot(x_na, y_ng, bend_coef, lin_ag, K_nn = None, wt_n=None):
     return trans_g, w_ng
     
 
-def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 10, inner_max_iter=100, rgrad=None, l_init=None):
+def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 2, inner_max_iter=100, rgrad=None, l_init=None):
     """
     minimize (Y-KA-XB-1C)' W (Y-KA-XB-1C) + tr(A'KA) + r(B)
     subject to A'(X 1) = 0
-    """
     
+    
+    Since, this optimization is called in an inner loop of the tps-rpm-reg-rot,
+    we dont need to set max_iter to be very high [it was set to 20 before].
+    """
+
     K_nn = ssd.squareform(ssd.pdist(x_na))
     N,_ = x_na.shape
     

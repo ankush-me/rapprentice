@@ -123,6 +123,11 @@ def loglinspace(a,b,n):
     "n numbers between a to b (inclusive) with constant ratio between consecutive numbers"
     return np.exp(np.linspace(np.log(a),np.log(b),n))    
 
+def loglinspace_arr(a,b,n):
+    "n vectors b/w a and b with constant ratio b/w them"
+    assert len(a)==len(b)
+    return np.r_[[loglinspace(a[i], b[i], n) for i in xrange(len(a))]].T
+
 
 def tps_rpm(x_nd, y_md, n_iter = 20, reg_init = .1, reg_final = .001, rad_init = .05, rad_final = .001, 
             plotting = False, verbose=True, f_init = None, return_full = False, plot_cb = None):
@@ -170,6 +175,76 @@ def tps_rpm(x_nd, y_md, n_iter = 20, reg_init = .1, reg_final = .001, rad_init =
         return f, info
     else:
         return f
+
+
+
+def tps_rpm_rot_reg(x_nd, y_md, n_iter = 100, bend_init = 1, bend_final = .0001, rot_init = (0.01,0.01,0.0025), rot_final=(0.001,0.001,0.00025), scale_init=1, scale_final=0.001, rad_init = .5, rad_final = .0005,
+                    verbose=True, f_init = None, return_full = False):
+    """
+    tps-rpm which uses regularization on the rotation and scaling separately.
+    Based on John's tps-rpm.
+    
+    Various parameters are:
+    ======================================
+    
+        1. bend_init/final : Regularization on the non-linear part of the transform.
+                             This value should go to zero to get exact fit.
+        
+        2. rot_init/final (x,y,z) : Regularization on the rotation along the x,y,z axes.
+                                    Note that the default cost for rotation along z is much lower than the cost for rotation along the x and y axes.
+        
+        3. scale_init/final : Regularization on the scaling part of the affine transform.
+                              This should in general be high because normally the scene is not scaled.
+        
+        4. rad_init/final   : This defines the unit of distance in each iteration.
+                              The correspondences are calculated as exp(- dist/ r).
+                              This parameter defines this r. 
+                              [see Chui and Rangarajan page 5, equation 6. This r is the 'T' there.]
+
+    Possible scope for improvement/ exploration:
+        Currently, in every iteration, all the parameters are updated, 
+        may be we need to add more loops, iterating over the parameters individually.
+    """
+    _,d  = x_nd.shape
+    regs = loglinspace(bend_init, bend_final, n_iter)
+    rads = loglinspace(rad_init, rad_final, n_iter)
+    scales = loglinspace(scale_init, scale_final, n_iter)
+    rots = loglinspace_arr(rot_init, rot_final, n_iter)
+    
+
+    # initialize the function f.
+    if f_init is not None: 
+        f = f_init  
+    else:
+        f         = ThinPlateSpline(d)
+        f.trans_g = np.median(y_md,axis=0) - np.median(x_nd,axis=0)
+        
+
+    # iterate b/w calculating correspondences and fitting the transformation.
+    for i in xrange(n_iter):
+        xwarped_nd = f.transform_points(x_nd)
+        corr_nm = calc_correspondence_matrix(xwarped_nd, y_md, r=rads[i], p=.2)
+
+        wt_n = corr_nm.sum(axis=1)
+        goodn = wt_n > .1
+        targ_Nd = np.dot(corr_nm[goodn, :]/wt_n[goodn][:,None], y_md)
+
+        x_Nd = x_nd[goodn]
+        fit_ThinPlateSpline_RotReg(x_Nd, targ_Nd, bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i])
+
+    if return_full:
+        info = {}
+        info["corr_nm"] = corr_nm
+        info["goodn"] = goodn
+        info["x_Nd"] = x_nd[goodn,:]
+        info["targ_Nd"] = targ_Nd
+        info["wt_N"] = wt_n[goodn]
+        info["cost"] = tps.tps_cost(f.lin_ag, f.trans_g, f.w_ng, x_Nd, targ_Nd, regs[-1])
+        return f, info
+    else:
+        return f
+
+    
 
 def logmap(m):
     "http://en.wikipedia.org/wiki/Axis_angle#Log_map_from_SO.283.29_to_so.283.29"
