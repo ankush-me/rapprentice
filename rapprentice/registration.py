@@ -108,16 +108,15 @@ def fit_ThinPlateSpline(x_na, y_ng, bend_coef=.1, rot_coef = 1e-5, wt_n=None):
     f.x_na = x_na
     return f        
 
-def fit_ThinPlateSpline_RotReg(x_na, y_ng, bend_coef = .1, rot_coefs = (0.01,0.01,0.0025),scale_coef=.01):
+
+def fit_ThinPlateSpline_RotReg(x_na, y_ng, bend_coef = .1, wt_n=None, rot_coefs = (0.01,0.01,0.0025),scale_coef=.01):
     import fastrapp
     f = ThinPlateSpline()
     rfunc = fastrapp.rot_reg
     fastrapp.set_coeffs(rot_coefs, scale_coef)
-    f.lin_ag, f.trans_g, f.w_ng = tps.tps_fit_regrot(x_na, y_ng, bend_coef, rfunc)
+    f.lin_ag, f.trans_g, f.w_ng = tps.tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n)
     f.x_na = x_na
     return f        
-    
-    
 
 def loglinspace(a,b,n):
     "n numbers between a to b (inclusive) with constant ratio between consecutive numbers"
@@ -178,11 +177,12 @@ def tps_rpm(x_nd, y_md, n_iter = 20, reg_init = .1, reg_final = .001, rad_init =
 
 
 
-def tps_rpm_rot_reg(x_nd, y_md, n_iter = 100, bend_init = 1, bend_final = .0001, rot_init = (0.01,0.01,0.0025), rot_final=(0.001,0.001,0.00025), scale_init=1, scale_final=0.001, rad_init = .5, rad_final = .0005,
-                    verbose=True, f_init = None, return_full = False):
+def tps_rpm_regrot(x_nd, y_md, n_iter = 100, bend_init = 0.05, bend_final = .0001, 
+                   rot_init = (0.1,0.1,0.025), rot_final=(0.001,0.001,0.00025), scale_init=1, scale_final=0.001, rad_init = .5, rad_final = .0005,
+                   verbose=True, f_init = None, return_full = False):
     """
     tps-rpm which uses regularization on the rotation and scaling separately.
-    Based on John's tps-rpm.
+    Based on John's [Chui & Rangarajan] tps-rpm.
     
     Various parameters are:
     ======================================
@@ -191,7 +191,8 @@ def tps_rpm_rot_reg(x_nd, y_md, n_iter = 100, bend_init = 1, bend_final = .0001,
                              This value should go to zero to get exact fit.
         
         2. rot_init/final (x,y,z) : Regularization on the rotation along the x,y,z axes.
-                                    Note that the default cost for rotation along z is much lower than the cost for rotation along the x and y axes.
+                                    Note that the default cost for rotation along z is much lower than
+                                    the cost for rotation along the x and y axes.
         
         3. scale_init/final : Regularization on the scaling part of the affine transform.
                               This should in general be high because normally the scene is not scaled.
@@ -222,6 +223,7 @@ def tps_rpm_rot_reg(x_nd, y_md, n_iter = 100, bend_init = 1, bend_final = .0001,
 
     # iterate b/w calculating correspondences and fitting the transformation.
     for i in xrange(n_iter):
+        print 'iter : ', i
         xwarped_nd = f.transform_points(x_nd)
         corr_nm = calc_correspondence_matrix(xwarped_nd, y_md, r=rads[i], p=.2)
 
@@ -230,7 +232,7 @@ def tps_rpm_rot_reg(x_nd, y_md, n_iter = 100, bend_init = 1, bend_final = .0001,
         targ_Nd = np.dot(corr_nm[goodn, :]/wt_n[goodn][:,None], y_md)
 
         x_Nd = x_nd[goodn]
-        fit_ThinPlateSpline_RotReg(x_Nd, targ_Nd, bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i])
+        f = fit_ThinPlateSpline_RotReg(x_Nd, targ_Nd, wt_n=wt_n, bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i])
 
     if return_full:
         info = {}

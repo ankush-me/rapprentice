@@ -453,7 +453,7 @@ def tps_fit_fixedrot(x_na, y_ng, bend_coef, lin_ag, K_nn = None, wt_n=None):
     return trans_g, w_ng
     
 
-def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 2, inner_max_iter=100, rgrad=None, l_init=None):
+def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 100, inner_max_iter=100, rgrad=None, l_init=None):
     """
     minimize (Y-KA-XB-1C)' W (Y-KA-XB-1C) + tr(A'KA) + r(B)
     subject to A'(X 1) = 0
@@ -464,9 +464,9 @@ def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 2, inner_
     """
 
     K_nn = ssd.squareform(ssd.pdist(x_na))
-    N,_ = x_na.shape
+    N,_  = x_na.shape
     
-    if wt_n is not None: print "warning: wt_n specified but not used"
+    #if wt_n is not None: print "warning: wt_n specified but not used"
     # initialize with tps_fit and small rotation regularization
     if l_init is None: 
         lin_ag, trans_g, w_ng = tps_fit2(x_na, y_ng, bend_coef, .01, wt_n)
@@ -474,19 +474,26 @@ def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 2, inner_
         lin_ag = l_init
         if True: print "initializing rotation with\n ",lin_ag
         trans_g, w_ng = tps_fit_fixedrot(x_na, y_ng, bend_coef, lin_ag, K_nn, wt_n)
-    #w_ng *= 0
+    
     Q_nn = np.eye(N) - np.outer(np.ones(N), np.ones(N))/N
+    
     for _ in xrange(max_iter):
-        e_ng = y_ng - K_nn.dot(w_ng)
+        
+        e_ng   = y_ng - K_nn.dot(w_ng)
         xQe_ag = x_na.T.dot(Q_nn).dot(e_ng)
         xQx_aa = x_na.T.dot(Q_nn).dot(x_na)
-        eQe_g = ((e_ng - e_ng.mean(axis=0))**2).sum(axis=0)
+        eQe_g  = ((e_ng - e_ng.mean(axis=0))**2).sum(axis=0)
+        
         def f(x): 
             b_ag = x.reshape(3,3)
             out = sum([b_ag[:,i].T.dot(xQx_aa).dot(b_ag[:,i]) - 2*b_ag[:,i].T.dot(xQe_ag[:,i]) + eQe_g[i] for i in xrange(3)]) + rfunc(b_ag)
             return out
+    
+        
         x0 = lin_ag.flatten()
         (soln, fopt,_,_,_,_,allsolns) = opt.fmin_powell(f, x0, maxiter=inner_max_iter, disp=bool(VERBOSE), retall=True, full_output=True)
+        
+        
         if not np.isfinite(soln).all(): 
             print "warning, optimization gave infinite result"
             soln = allsolns[-2]
@@ -494,8 +501,10 @@ def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 2, inner_
             soln = lin_ag
             print "warning, optimization gave fopt=infinity"
         lin_ag = soln.reshape(3,3)
+        
         assert np.isfinite(lin_ag).all()
         trans_g, w_ng = tps_fit_fixedrot(x_na, y_ng, bend_coef, lin_ag, K_nn, wt_n)
+    
     #trans_g = y_ng.mean(axis=0) - tps_eval(x_na, lin_ag, np.zeros(3), w_ng, x_na).mean(axis=0)
     if VERBOSE: print "rotation result", lin_ag
     return lin_ag, trans_g, w_ng
