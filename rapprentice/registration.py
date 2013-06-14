@@ -232,7 +232,8 @@ def tps_rpm_regrot(x_nd, y_md, n_iter = 100, bend_init = 0.05, bend_final = .000
         targ_Nd = np.dot(corr_nm[goodn, :]/wt_n[goodn][:,None], y_md)
 
         x_Nd = x_nd[goodn]
-        f = fit_ThinPlateSpline_RotReg(x_Nd, targ_Nd, wt_n=wt_n, bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i])
+        f = fit_ThinPlateSpline_RotReg(x_Nd, targ_Nd, wt_n=wt_n[goodn], bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i])
+
 
     if return_full:
         info = {}
@@ -246,7 +247,80 @@ def tps_rpm_regrot(x_nd, y_md, n_iter = 100, bend_init = 0.05, bend_final = .000
     else:
         return f
 
+
+def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100, bend_init = 0.05, bend_final = .0001, 
+                   rot_init = (0.1,0.1,0.025), rot_final=(0.001,0.001,0.00025), scale_init=1, scale_final=0.001, rad_init = .5, rad_final = .0005,
+                   verbose=True, f_init = None, return_full = False):
+    """
+    Similar to tps_rpm_regrot except that it accepts a 
+    LIST of source and target point clouds and registers 
+    a cloud in the source to the corresponding one in the target.  
     
+    For details on the various parameters check the doc of tps_rpm_regrot.
+    """
+
+    assert len(x_clouds)==len(y_clouds), "Different number of point-clouds in source and target."
+    #flatten the list of point clouds into one big point cloud
+    combined_x = np.concatenate(x_clouds) 
+    combined_y = np.concatenate(y_clouds)
+
+    # concatenate the clouds into one big cloud
+    _,d  = combined_x.shape
+
+    regs   = loglinspace(bend_init, bend_final, n_iter)
+    rads   = loglinspace(rad_init, rad_final, n_iter)
+    scales = loglinspace(scale_init, scale_final, n_iter)
+    rots   = loglinspace_arr(rot_init, rot_final, n_iter)
+
+    # initialize the function f.
+    if f_init is not None: 
+        f = f_init  
+    else:
+        f         = ThinPlateSpline(d)
+        f.trans_g = np.median(combined_y,axis=0) - np.median(combined_x,axis=0)
+
+
+    # iterate b/w calculating correspondences and fitting the transformation.
+    for i in xrange(n_iter):
+        print 'iter : ', i        
+        target_pts   = []
+        good_inds    = []
+        wt           = []
+
+        for j in xrange(len(x_clouds)): #process a pair of point-clouds
+            x_nd = x_clouds[j]
+            y_md = y_clouds[j]
+            
+            assert x_nd.ndim==y_md.ndim==2, "tps_rpm_reg_rot_multi : Point clouds are not two dimensional arrays"
+                        
+                        
+            xwarped_nd = f.transform_points(x_nd)
+            corr_nm = calc_correspondence_matrix(xwarped_nd, y_md, r=rads[i], p=.2)
+
+            wt_n = corr_nm.sum(axis=1) # gives the row-wise sum of the corr_nm matrix
+            goodn = wt_n > .1
+            targ_Nd = np.dot(corr_nm[goodn, :]/wt_n[goodn][:,None], y_md) # calculate the average points based on softmatching
+
+            target_pts.append(targ_Nd)
+            good_inds.append(goodn)  
+            wt.append(wt_n[goodn])
+
+        target_pts = np.concatenate(target_pts)
+        good_inds  = np.concatenate(good_inds)
+        source_pts = combined_x[good_inds]
+        wt         = np.concatenate(wt)
+
+        assert len(target_pts)==len(source_pts)==len(wt), "Lengths are not equal. Error!"
+        f = fit_ThinPlateSpline_RotReg(source_pts, target_pts, wt_n=wt, bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i])
+
+    if return_full:
+        info = {}
+        info["cost"] = tps.tps_cost(f.lin_ag, f.trans_g, f.w_ng, source_pts, target_pts, regs[-1])
+        return f, info
+    else:
+        return f
+
+
 
 def logmap(m):
     "http://en.wikipedia.org/wiki/Axis_angle#Log_map_from_SO.283.29_to_so.283.29"
