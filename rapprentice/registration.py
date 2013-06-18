@@ -109,12 +109,12 @@ def fit_ThinPlateSpline(x_na, y_ng, bend_coef=.1, rot_coef = 1e-5, wt_n=None):
     return f        
 
 
-def fit_ThinPlateSpline_RotReg(x_na, y_ng, bend_coef = .1, wt_n=None, rot_coefs = (0.01,0.01,0.0025),scale_coef=.01):
+def fit_ThinPlateSpline_RotReg(x_na, y_ng, bend_coef = .1, wt_n=None, rot_coefs = (0.01,0.01,0.0025),scale_coef=.01, niter_powell=100):
     import fastrapp
     f = ThinPlateSpline()
     rfunc = fastrapp.rot_reg
     fastrapp.set_coeffs(rot_coefs, scale_coef)
-    f.lin_ag, f.trans_g, f.w_ng = tps.tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n)
+    f.lin_ag, f.trans_g, f.w_ng = tps.tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n, max_iter=niter_powell)
     f.x_na = x_na
     return f        
 
@@ -248,9 +248,14 @@ def tps_rpm_regrot(x_nd, y_md, n_iter = 100, bend_init = 0.05, bend_final = .000
         return f
 
 
-def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100, bend_init = 0.05, bend_final = .0001, 
-                   rot_init = (0.1,0.1,0.025), rot_final=(0.001,0.001,0.00025), scale_init=1, scale_final=0.001, rad_init = .5, rad_final = .0005,
-                   verbose=True, f_init = None, return_full = False):
+def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100, 
+                   n_iter_powell_init=100, n_iter_powell_final=100, 
+                   bend_init = 0.05, bend_final = .0001, 
+                   rot_init = (0.1,0.1,0.025), rot_final=(0.001,0.001,0.00025),
+                   scale_init=1, scale_final=0.001, 
+                   rad_init = .5, rad_final = .0005,
+                   verbose=True, f_init = None, return_full = False,
+                   plotting_cb=None):
     """
     Similar to tps_rpm_regrot except that it accepts a 
     LIST of source and target point clouds and registers 
@@ -260,6 +265,7 @@ def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100, bend_init = 0.05, ben
     """
 
     assert len(x_clouds)==len(y_clouds), "Different number of point-clouds in source and target."
+    
     #flatten the list of point clouds into one big point cloud
     combined_x = np.concatenate(x_clouds) 
     combined_y = np.concatenate(y_clouds)
@@ -267,10 +273,11 @@ def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100, bend_init = 0.05, ben
     # concatenate the clouds into one big cloud
     _,d  = combined_x.shape
 
-    regs   = loglinspace(bend_init, bend_final, n_iter)
-    rads   = loglinspace(rad_init, rad_final, n_iter)
-    scales = loglinspace(scale_init, scale_final, n_iter)
-    rots   = loglinspace_arr(rot_init, rot_final, n_iter)
+    regs     = loglinspace(bend_init, bend_final, n_iter)
+    rads     = loglinspace(rad_init, rad_final, n_iter)
+    scales   = loglinspace(scale_init, scale_final, n_iter)
+    rots     = loglinspace_arr(rot_init, rot_final, n_iter)
+    npowells = loglinspace(n_iter_powell_init, n_iter_powell_final, n_iter).astype(int) 
 
     # initialize the function f.
     if f_init is not None: 
@@ -311,7 +318,14 @@ def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100, bend_init = 0.05, ben
         wt         = np.concatenate(wt)
 
         assert len(target_pts)==len(source_pts)==len(wt), "Lengths are not equal. Error!"
-        f = fit_ThinPlateSpline_RotReg(source_pts, target_pts, wt_n=wt, bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i])
+        f = fit_ThinPlateSpline_RotReg(source_pts, target_pts, wt_n=wt, bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i], niter_powell=npowells[i])
+        
+        from rapprentice.colorize import colorize
+        print colorize("\ttps-rpm-rotreg : iter : %d | fit distance : "%i, "red", True) , colorize("%g"%match_score(f.transform_points(source_pts), target_pts), "green", True)
+
+        if plotting_cb and i%5==0:
+            plotting_cb(f)
+        
 
     if return_full:
         info = {}
@@ -320,6 +334,13 @@ def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100, bend_init = 0.05, ben
     else:
         return f
 
+
+def match_score(src, target):
+    """
+    lower score ==> better match
+    """
+    d = np.sum(np.abs(src-target)**2,axis=-1)**(1./2)
+    return d.sum()
 
 
 def logmap(m):
@@ -371,7 +392,7 @@ def logmap(m):
 #         ypred_ng = f.transform_points(x_nd)
 #         dists_nm = ssd.cdist(ypred_ng, y_md)
 #         # how many radians rotation is one mm average error reduction worth?
-# 
+# fit_score(src, targ, dist_param):
 #         tpscost = info["cost"]
 #         # seems like a reasonable goodness-of-fit measure
 #         regcost = regfunc(f.lin_ag)
