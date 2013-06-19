@@ -4,8 +4,15 @@ Register point clouds to each other
 
 from __future__ import division
 import numpy as np
+np.set_printoptions(threshold=np.nan)
+
 import scipy.spatial.distance as ssd
 from rapprentice import tps, svds, math_utils
+from rapprentice.colorize import colorize
+
+from reg_clouds.mayavi_plotter import *
+from mayavi import mlab
+
 # from svds import svds
 
 
@@ -248,15 +255,21 @@ def tps_rpm_regrot(x_nd, y_md, n_iter = 100, bend_init = 0.05, bend_final = .000
         return f
 
 
-def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100, 
+def tps_rpm_regrot_multi(x_clouds, y_clouds,
+                   x_aug=None, y_aug=None,
+                   n_iter = 100, 
                    n_iter_powell_init=100, n_iter_powell_final=100, 
                    bend_init = 0.05, bend_final = .0001, 
                    rot_init = (0.1,0.1,0.025), rot_final=(0.001,0.001,0.00025),
                    scale_init=1, scale_final=0.001, 
                    rad_init = .5, rad_final = .0005,
                    verbose=True, f_init = None, return_full = False,
-                   plotting_cb=None):
+                   plotting_cb=None, plotter=None):
     """
+    x_aug : dict of matrices of extra coordinates for x_clouds. The key is the index of the cloud.
+    y_aug : similar to x_aug for y_clouds
+    
+    
     Similar to tps_rpm_regrot except that it accepts a 
     LIST of source and target point clouds and registers 
     a cloud in the source to the corresponding one in the target.  
@@ -265,7 +278,11 @@ def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100,
     """
 
     assert len(x_clouds)==len(y_clouds), "Different number of point-clouds in source and target."
-    
+
+    if x_aug==None or y_aug==None:
+        x_aug = y_aug = {}
+ 
+ 
     #flatten the list of point clouds into one big point cloud
     combined_x = np.concatenate(x_clouds) 
     combined_y = np.concatenate(y_clouds)
@@ -289,7 +306,6 @@ def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100,
 
     # iterate b/w calculating correspondences and fitting the transformation.
     for i in xrange(n_iter):
-        print 'iter : ', i        
         target_pts   = []
         good_inds    = []
         wt           = []
@@ -300,12 +316,16 @@ def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100,
             
             assert x_nd.ndim==y_md.ndim==2, "tps_rpm_reg_rot_multi : Point clouds are not two dimensional arrays"
                         
-                        
             xwarped_nd = f.transform_points(x_nd)
-            corr_nm = calc_correspondence_matrix(xwarped_nd, y_md, r=rads[i], p=.2)
+            
+            # use augmented coordinates.
+            if x_aug.has_key(j) and y_aug.has_key(j):
+                corr_nm = calc_correspondence_matrix(np.c_[xwarped_nd, x_aug[j]], np.c_[y_md, y_aug[j]], r=rads[i], p=.2)
+            else:
+                corr_nm = calc_correspondence_matrix(xwarped_nd, y_md, r=rads[i], p=.2)
 
             wt_n = corr_nm.sum(axis=1) # gives the row-wise sum of the corr_nm matrix
-            goodn = wt_n > .1
+            goodn = wt_n > 0.1
             targ_Nd = np.dot(corr_nm[goodn, :]/wt_n[goodn][:,None], y_md) # calculate the average points based on softmatching
 
             target_pts.append(targ_Nd)
@@ -320,12 +340,21 @@ def tps_rpm_regrot_multi(x_clouds, y_clouds, n_iter = 100,
         assert len(target_pts)==len(source_pts)==len(wt), "Lengths are not equal. Error!"
         f = fit_ThinPlateSpline_RotReg(source_pts, target_pts, wt_n=wt, bend_coef = regs[i], rot_coefs = rots[i], scale_coef=scales[i], niter_powell=npowells[i])
         
-        from rapprentice.colorize import colorize
-        print colorize("\ttps-rpm-rotreg : iter : %d | fit distance : "%i, "red", True) , colorize("%g"%match_score(f.transform_points(source_pts), target_pts), "green", True)
+
+        mscore = match_score(f.transform_points(source_pts), target_pts)
+        tscore = tps.tps_cost(f.lin_ag, f.trans_g, f.w_ng, source_pts, target_pts, regs[-1])
+        print colorize("\ttps-rpm-rotreg : iter : %d | fit distance : "%i, "red") , colorize("%g"%mscore, "green"), colorize(" | tps score: %g"%tscore, "blue")
 
         if plotting_cb and i%5==0:
             plotting_cb(f)
-        
+
+        # just plots the "target_pts" : the matched up points found by the correspondences.
+        if plotter:
+            plotter.request(gen_mlab_request(mlab.points3d, target_pts[:,0], target_pts[:,1], target_pts[:,2], color=(1,1,0), scale_factor=0.001))
+
+        # return if source and target match up well
+        if mscore < 0.01:
+            break
 
     if return_full:
         info = {}
